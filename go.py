@@ -32,6 +32,7 @@ def smart_search_clip(term, days_back):
 
     r = requests.post(f"{IMMICH_URL}/api/search/smart", json=payload, headers=HEADERS)
     r.raise_for_status()
+    print(r.json())
     return r.json()
 
 
@@ -74,6 +75,7 @@ if __name__ == "__main__":
     print("\n📊 Matching odometer with gas pump images:\n")
 
     for odo in odometer_assets:
+        print(f"examining: {IMMICH_URL}/api/asset/thumbnail/{odo}")
         odo_time = parse_asset_time(odo)
         if not odo_time:
             continue
