@@ -1,43 +1,128 @@
 import os
-import sqlite3
 from datetime import datetime, timedelta
 import ynab
+import gspread
+from google.oauth2.service_account import Credentials
+import requests
 
 # ==== CONFIG ====
 YNAB_API_KEY = os.getenv("YNAB_API_KEY")
 YNAB_BUDGET_ID = os.getenv("YNAB_BUDGET_ID")
 YNAB_GAS_CATEGORY_ID = os.getenv("YNAB_GAS_CATEGORY_ID")
+GOOGLE_SHEETS_CREDS_FILE = os.getenv("GOOGLE_SHEETS_CREDS_FILE", "service_account.json")
+GOOGLE_SHEET_ID = os.getenv("GOOGLE_SHEET_ID")
+GOOGLE_SHEET_TAB_NAME = os.getenv("GOOGLE_SHEET_TAB_NAME", "Samantha")
+HA_URL = os.getenv("HA_URL")
+HA_TOKEN = os.getenv("HA_TOKEN")
+HA_NOTIFY_SERVICE = os.getenv("HA_NOTIFY_SERVICE", "notify.mobile_app_trickyiphone16v2")
 DAYS_BACK = 90
-DB_PATH = "gas_tracking.db"
 
+# Validate required environment variables
 if not YNAB_API_KEY:
     raise EnvironmentError("YNAB_API_KEY environment variable not set")
 if not YNAB_BUDGET_ID:
     raise EnvironmentError("YNAB_BUDGET_ID environment variable not set")
+if not GOOGLE_SHEET_ID:
+    raise EnvironmentError("GOOGLE_SHEET_ID environment variable not set")
+if not HA_URL:
+    raise EnvironmentError("HA_URL environment variable not set")
+if not HA_TOKEN:
+    raise EnvironmentError("HA_TOKEN environment variable not set")
 
 
-# ==== DATABASE SETUP ====
-def init_database():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
+# ==== GOOGLE SHEETS INTEGRATION ====
+def get_google_sheet():
+    """Connect to Google Sheet and return the worksheet"""
+    scopes = [
+        'https://www.googleapis.com/auth/spreadsheets',
+        'https://www.googleapis.com/auth/drive'
+    ]
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS gas_transactions (
-            ynab_transaction_id TEXT PRIMARY KEY,
-            date TEXT NOT NULL,
-            amount INTEGER NOT NULL,
-            payee_name TEXT,
-            memo TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
+    creds = Credentials.from_service_account_file(GOOGLE_SHEETS_CREDS_FILE, scopes=scopes)
+    client = gspread.authorize(creds)
 
-    conn.commit()
-    conn.close()
+    spreadsheet = client.open_by_key(GOOGLE_SHEET_ID)
+
+    # Try to get existing worksheet, create if doesn't exist
+    try:
+        worksheet = spreadsheet.worksheet(GOOGLE_SHEET_TAB_NAME)
+    except gspread.WorksheetNotFound:
+        worksheet = spreadsheet.add_worksheet(title=GOOGLE_SHEET_TAB_NAME, rows=1000, cols=6)
+        # Add header row
+        worksheet.append_row(['ynab_transaction_id', 'date', 'provider', 'amount', 'gallons', 'notes'])
+
+    return worksheet
+
+
+def get_existing_transaction_ids(worksheet):
+    """Get all existing YNAB transaction IDs from the sheet"""
+    try:
+        # Get all values from first column (transaction IDs)
+        all_values = worksheet.col_values(1)
+        # Skip header row
+        if len(all_values) > 1:
+            return set(all_values[1:])
+        return set()
+    except Exception as e:
+        print(f"⚠️  Error reading existing transactions: {e}")
+        return set()
+
+
+def append_transactions_to_sheet(worksheet, transactions):
+    """Append new transactions to the Google Sheet"""
+    if not transactions:
+        return 0
+
+    rows = []
+    for transaction in transactions:
+        date = transaction.var_date.strftime('%Y-%m-%d') if hasattr(transaction.var_date, 'strftime') else str(transaction.var_date)
+        provider = extract_provider_from_payee(transaction.payee_name)
+        amount = abs(transaction.amount) / 1000
+
+        rows.append([
+            transaction.id,
+            date,
+            provider,
+            f"${amount:.2f}",
+            "",  # Empty gallons column (must be explicit empty string)
+            ""   # Empty notes column (must be explicit empty string)
+        ])
+
+    if rows:
+        worksheet.append_rows(rows)
+
+    return len(rows)
+
+
+def count_missing_gallons(worksheet):
+    """Count rows where gallons column is empty"""
+    try:
+        # Get all rows (to count total data rows)
+        all_rows = worksheet.get_all_values()
+        # Skip header row
+        data_rows = all_rows[1:] if len(all_rows) > 1 else []
+
+        # Count rows where column 5 (gallons, index 4) is empty
+        missing_count = 0
+        for row in data_rows:
+            # If row has less than 5 columns, gallons is missing
+            if len(row) < 5:
+                missing_count += 1
+            else:
+                # Check if gallons column (index 4) is empty
+                gallons_value = row[4].strip()
+                if not gallons_value:
+                    missing_count += 1
+
+        return missing_count
+    except Exception as e:
+        print(f"⚠️  Error counting missing gallons: {e}")
+        return 0
 
 
 # ==== YNAB INTEGRATION ====
 def fetch_gas_transactions():
+    """Fetch gas transactions from YNAB"""
     configuration = ynab.Configuration(access_token=YNAB_API_KEY)
 
     with ynab.ApiClient(configuration) as api_client:
@@ -68,30 +153,8 @@ def fetch_gas_transactions():
             return gas_transactions
 
         except Exception as e:
-            print(f"Error fetching YNAB transactions: {e}")
+            print(f"❌ Error fetching YNAB transactions: {e}")
             return []
-
-
-def store_gas_transactions(transactions):
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-
-    for transaction in transactions:
-        cursor.execute('''
-            INSERT OR REPLACE INTO gas_transactions
-            (ynab_transaction_id, date, amount, payee_name, memo)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (
-            transaction.id,
-            transaction.var_date.strftime('%Y-%m-%d') if hasattr(transaction.var_date, 'strftime') else str(transaction.var_date),
-            transaction.amount,
-            transaction.payee_name or '',
-            transaction.memo or ''
-        ))
-
-    conn.commit()
-    conn.close()
-    return len(transactions)
 
 
 def extract_provider_from_payee(payee_name):
@@ -125,44 +188,76 @@ def extract_provider_from_payee(payee_name):
     return payee_name
 
 
+# ==== HOME ASSISTANT NOTIFICATION ====
+def send_ha_notification(missing_count, sheet_url):
+    """Send notification to Home Assistant"""
+    if missing_count == 0:
+        print("✅ No action needed - all transactions have gallon data")
+        return
+
+    headers = {
+        "Authorization": f"Bearer {HA_TOKEN}",
+        "Content-Type": "application/json"
+    }
+
+    message = f"You have {missing_count} gas fill-up{'s' if missing_count != 1 else ''} that need gallon data"
+
+    payload = {
+        "message": message,
+        "title": "Gas Tracker: Action Needed",
+        "data": {
+            "url": sheet_url,
+            "clickAction": sheet_url
+        }
+    }
+
+    # Call the notify service
+    service_path = HA_NOTIFY_SERVICE.replace(".", "/")
+    url = f"{HA_URL}/api/services/{service_path}"
+
+    try:
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status()
+        print(f"📱 Sent Home Assistant notification: {missing_count} transaction(s) need gallon data")
+    except Exception as e:
+        print(f"⚠️  Failed to send Home Assistant notification: {e}")
+
+
 # ==== MAIN ====
 if __name__ == "__main__":
-    print("🚀 Gas Tracker - YNAB Integration")
-    print("=" * 40)
-
-    # Initialize database
-    print("📊 Setting up database...")
-    init_database()
+    print("🚀 Gas Tracker - YNAB to Google Sheets Sync")
+    print("=" * 60)
 
     # Fetch YNAB transactions
     print("💰 Fetching gas transactions from YNAB...")
     gas_transactions = fetch_gas_transactions()
-    print(f"💳 Found {len(gas_transactions)} gas transactions")
+    print(f"💳 Found {len(gas_transactions)} gas transactions in last {DAYS_BACK} days")
 
-    if gas_transactions:
-        stored_count = store_gas_transactions(gas_transactions)
-        print(f"💾 Stored {stored_count} transactions in database")
+    # Connect to Google Sheet
+    print(f"\n📊 Connecting to Google Sheet '{GOOGLE_SHEET_TAB_NAME}'...")
+    worksheet = get_google_sheet()
 
-    # Create output table
-    print(f"\n📊 Gas Fill-Up Summary (Last {DAYS_BACK} days)")
-    print("=" * 80)
-    print(f"{'Date':<12} {'Provider':<20} {'Amount':<10}")
-    print("-" * 80)
+    # Get existing transaction IDs
+    existing_ids = get_existing_transaction_ids(worksheet)
+    print(f"📋 Found {len(existing_ids)} existing transactions in sheet")
 
-    for transaction in gas_transactions:
-        # Extract data for table
-        date = transaction.var_date.strftime('%Y-%m-%d') if hasattr(transaction.var_date, 'strftime') else str(transaction.var_date)
-        provider = extract_provider_from_payee(transaction.payee_name)
-        amount = abs(transaction.amount) / 1000
+    # Filter for new transactions only
+    new_transactions = [t for t in gas_transactions if t.id not in existing_ids]
+    print(f"🆕 Found {len(new_transactions)} new transactions to add")
 
-        # Display table row
-        print(f"{date:<12} {provider:<20} ${amount:<9.2f}")
+    # Append new transactions
+    if new_transactions:
+        added_count = append_transactions_to_sheet(worksheet, new_transactions)
+        print(f"✅ Added {added_count} new transactions to sheet")
 
-    print("-" * 80)
-    print(f"\n📈 Summary:")
-    print(f"💳 Total fill-ups: {len(gas_transactions)}")
-    print(f"💾 Database: {DB_PATH}")
+    # Count missing gallons
+    missing_count = count_missing_gallons(worksheet)
+    print(f"\n⛽ Transactions missing gallon data: {missing_count}")
 
-    if gas_transactions:
-        total_spent = sum(abs(t.amount) / 1000 for t in gas_transactions)
-        print(f"💰 Total spent: ${total_spent:.2f}")
+    # Send Home Assistant notification
+    sheet_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit#gid={worksheet.id}"
+    send_ha_notification(missing_count, sheet_url)
+
+    print("\n" + "=" * 60)
+    print("✅ Sync complete!")
+    print(f"📊 Google Sheet: {sheet_url}")

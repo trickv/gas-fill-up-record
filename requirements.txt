@@ -1,2 +1,4 @@
 requests
 ynab
+gspread
+google-auth

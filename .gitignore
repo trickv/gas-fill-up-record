@@ -1,6 +1,7 @@
 # Secrets and environment
 .env
 secrets.py
+service_account.json
 
 # Database
 *.db
