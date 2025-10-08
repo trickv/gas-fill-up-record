@@ -99,7 +99,7 @@ def append_transactions_to_sheet(worksheet, transactions):
             transaction.id,
             date,
             provider,
-            f"${amount:.2f}",
+            amount,  # Plain float, no dollar sign
             "",  # Empty gallons column
             "",  # Empty odometer column
             "",  # Empty car column (Samantha or MKZ)
