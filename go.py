@@ -97,38 +97,27 @@ def append_transactions_to_sheet(worksheet, transactions):
     return len(rows)
 
 
-def count_missing_gallons(worksheet):
-    """Count rows where gallons column is empty, unless car is set to 'skip'"""
+def count_missing_data(worksheet):
+    """Count rows where car column is empty (need user input)"""
     try:
         # Get all rows (to count total data rows)
         all_rows = worksheet.get_all_values()
         # Skip header row
         data_rows = all_rows[1:] if len(all_rows) > 1 else []
 
-        # Column indices: gallons=4, car=6
-        GALLONS_COL = 4
+        # Column index: car=6
         CAR_COL = 6
 
         missing_count = 0
         for row in data_rows:
-            # Check if car is set to "skip" - if so, don't count this row
-            car_value = row[CAR_COL].strip().lower() if len(row) > CAR_COL else ""
-            if car_value == "skip":
-                # User explicitly marked to skip this row
-                continue
-
-            # Check if gallons column is empty
-            if len(row) < 5:
-                # Row doesn't have gallons column at all
+            # Count if car column is empty (user hasn't filled in data yet)
+            car_value = row[CAR_COL].strip() if len(row) > CAR_COL else ""
+            if not car_value:
                 missing_count += 1
-            else:
-                gallons_value = row[GALLONS_COL].strip()
-                if not gallons_value:
-                    missing_count += 1
 
         return missing_count
     except Exception as e:
-        print(f"⚠️  Error counting missing gallons: {e}")
+        print(f"⚠️  Error counting missing data: {e}")
         return 0
 
 
@@ -274,7 +263,7 @@ def send_ha_notification(missing_count, sheet_url):
         "Content-Type": "application/json"
     }
 
-    message = f"You have {missing_count} gas fill-up{'s' if missing_count != 1 else ''} that need gallon data"
+    message = f"You have {missing_count} gas fill-up{'s' if missing_count != 1 else ''} that need data entry"
 
     payload = {
         "message": message,
@@ -324,9 +313,9 @@ if __name__ == "__main__":
         added_count = append_transactions_to_sheet(worksheet, new_transactions)
         print(f"✅ Added {added_count} new transactions to sheet")
 
-    # Count missing gallons
-    missing_count = count_missing_gallons(worksheet)
-    print(f"\n⛽ Transactions missing gallon data: {missing_count}")
+    # Count rows needing user input
+    missing_count = count_missing_data(worksheet)
+    print(f"\n📝 Transactions needing data entry: {missing_count}")
 
     # Update MPG calculations
     print("\n📐 Updating MPG calculations...")
