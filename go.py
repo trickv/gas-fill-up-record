@@ -258,7 +258,7 @@ def extract_provider_from_payee(payee_name):
 def send_ha_notification(missing_count, sheet_url):
     """Send notification to Home Assistant"""
     if missing_count == 0:
-        print("✅ No action needed - all transactions have gallon data")
+        print("✅ No action needed - all transactions have been processed")
         return
 
     headers = {
