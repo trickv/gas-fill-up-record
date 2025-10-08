@@ -84,8 +84,11 @@ def append_transactions_to_sheet(worksheet, transactions):
             date,
             provider,
             f"${amount:.2f}",
-            "",  # Empty gallons column (must be explicit empty string)
-            ""   # Empty notes column (must be explicit empty string)
+            "",  # Empty gallons column
+            "",  # Empty odometer column
+            "",  # Empty car column (Samantha or MKZ)
+            "",  # Empty MPG column
+            ""   # Empty notes column
         ])
 
     if rows:
@@ -95,28 +98,99 @@ def append_transactions_to_sheet(worksheet, transactions):
 
 
 def count_missing_gallons(worksheet):
-    """Count rows where gallons column is empty"""
+    """Count rows where gallons column is empty, unless car is set to 'skip'"""
     try:
         # Get all rows (to count total data rows)
         all_rows = worksheet.get_all_values()
         # Skip header row
         data_rows = all_rows[1:] if len(all_rows) > 1 else []
 
-        # Count rows where column 5 (gallons, index 4) is empty
+        # Column indices: gallons=4, car=6
+        GALLONS_COL = 4
+        CAR_COL = 6
+
         missing_count = 0
         for row in data_rows:
-            # If row has less than 5 columns, gallons is missing
+            # Check if car is set to "skip" - if so, don't count this row
+            car_value = row[CAR_COL].strip().lower() if len(row) > CAR_COL else ""
+            if car_value == "skip":
+                # User explicitly marked to skip this row
+                continue
+
+            # Check if gallons column is empty
             if len(row) < 5:
+                # Row doesn't have gallons column at all
                 missing_count += 1
             else:
-                # Check if gallons column (index 4) is empty
-                gallons_value = row[4].strip()
+                gallons_value = row[GALLONS_COL].strip()
                 if not gallons_value:
                     missing_count += 1
 
         return missing_count
     except Exception as e:
         print(f"⚠️  Error counting missing gallons: {e}")
+        return 0
+
+
+def update_mpg_calculations(worksheet):
+    """Update MPG formulas for rows where current and previous both have gallons + odometer for Samantha"""
+    try:
+        # Get all rows
+        all_rows = worksheet.get_all_values()
+        if len(all_rows) <= 2:  # Need at least header + 2 data rows
+            return 0
+
+        updated_count = 0
+        # Column indices (0-based): gallons=4, odometer=5, car=6, mpg=7, notes=8
+        GALLONS_COL = 4
+        ODOMETER_COL = 5
+        CAR_COL = 6
+        MPG_COL = 7
+
+        # Start from row 3 (index 2, since we need a previous row)
+        for i in range(2, len(all_rows)):
+            current_row = all_rows[i]
+            previous_row = all_rows[i - 1]
+
+            # Check if current row is for Samantha (primary car)
+            current_car = current_row[CAR_COL].strip() if len(current_row) > CAR_COL else ""
+            if current_car.lower() != "samantha":
+                continue
+
+            # Check if both rows have gallons and odometer
+            current_has_data = (
+                len(current_row) > ODOMETER_COL and
+                current_row[GALLONS_COL].strip() and
+                current_row[ODOMETER_COL].strip()
+            )
+            previous_has_data = (
+                len(previous_row) > ODOMETER_COL and
+                previous_row[GALLONS_COL].strip() and
+                previous_row[ODOMETER_COL].strip()
+            )
+
+            # Check if previous row is also Samantha
+            previous_car = previous_row[CAR_COL].strip() if len(previous_row) > CAR_COL else ""
+            previous_is_samantha = previous_car.lower() == "samantha"
+
+            if current_has_data and previous_has_data and previous_is_samantha:
+                # Row numbers are 1-indexed in Google Sheets
+                sheet_row_num = i + 1
+
+                # Create formula: =(odometer_current - odometer_previous) / gallons_current
+                # Using A1 notation for the formula
+                mpg_formula = f"=({chr(65+ODOMETER_COL)}{sheet_row_num}-{chr(65+ODOMETER_COL)}{sheet_row_num-1})/{chr(65+GALLONS_COL)}{sheet_row_num}"
+
+                # Check if MPG cell needs updating (is empty or not a formula)
+                current_mpg = current_row[MPG_COL] if len(current_row) > MPG_COL else ""
+                if not current_mpg.startswith("="):
+                    # Update the MPG cell
+                    worksheet.update_cell(sheet_row_num, MPG_COL + 1, mpg_formula)
+                    updated_count += 1
+
+        return updated_count
+    except Exception as e:
+        print(f"⚠️  Error updating MPG calculations: {e}")
         return 0
 
 
@@ -253,6 +327,14 @@ if __name__ == "__main__":
     # Count missing gallons
     missing_count = count_missing_gallons(worksheet)
     print(f"\n⛽ Transactions missing gallon data: {missing_count}")
+
+    # Update MPG calculations
+    print("\n📐 Updating MPG calculations...")
+    mpg_updated = update_mpg_calculations(worksheet)
+    if mpg_updated > 0:
+        print(f"✅ Updated {mpg_updated} MPG formula(s)")
+    else:
+        print("✅ All MPG formulas up to date")
 
     # Send Home Assistant notification
     sheet_url = f"https://docs.google.com/spreadsheets/d/{GOOGLE_SHEET_ID}/edit#gid={worksheet.id}"
