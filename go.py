@@ -91,13 +91,21 @@ def append_transactions_to_sheet(worksheet, transactions):
 
     rows = []
     for transaction in transactions:
-        date = transaction.var_date.strftime('%Y-%m-%d') if hasattr(transaction.var_date, 'strftime') else str(transaction.var_date)
+        # Parse date as datetime object for Google Sheets
+        if hasattr(transaction.var_date, 'strftime'):
+            # Already a date/datetime object
+            date_obj = transaction.var_date
+        else:
+            # Parse string to datetime
+            from datetime import datetime as dt
+            date_obj = dt.strptime(str(transaction.var_date), '%Y-%m-%d')
+
         provider = extract_provider_from_payee(transaction.payee_name)
         amount = abs(transaction.amount) / 1000
 
         rows.append([
             transaction.id,
-            date,
+            date_obj,  # Use datetime object, not string
             provider,
             amount,  # Plain float, no dollar sign
             "",  # Empty gallons column
