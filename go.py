@@ -143,6 +143,7 @@ def update_mpg_calculations(worksheet):
             return 0
 
         updated_count = 0
+        suspicious_count = 0
 
         # Start from row 3 (index 2, since we need a previous row)
         for i in range(2, len(all_rows)):
@@ -174,6 +175,27 @@ def update_mpg_calculations(worksheet):
                 # Row numbers are 1-indexed in Google Sheets
                 sheet_row_num = i + 1
 
+                # Calculate MPG to check if it's suspicious
+                try:
+                    current_odometer = float(current_row[COL_ODOMETER])
+                    previous_odometer = float(previous_row[COL_ODOMETER])
+                    current_gallons = float(current_row[COL_GALLONS])
+                    calculated_mpg = (current_odometer - previous_odometer) / current_gallons
+
+                    # Check if MPG > 35 (likely missing transaction)
+                    if calculated_mpg > 35:
+                        # Clear the cell and highlight yellow
+                        worksheet.update_cell(sheet_row_num, COL_MPG + 1, "")
+                        # Format cell with yellow background
+                        worksheet.format(f"{chr(65+COL_MPG)}{sheet_row_num}", {
+                            "backgroundColor": {"red": 1.0, "green": 1.0, "blue": 0.0}
+                        })
+                        suspicious_count += 1
+                        continue
+                except (ValueError, ZeroDivisionError):
+                    # If we can't calculate, skip this row
+                    continue
+
                 # Create formula: =(odometer_current - odometer_previous) / gallons_current
                 # Using A1 notation for the formula
                 mpg_formula = f"=({chr(65+COL_ODOMETER)}{sheet_row_num}-{chr(65+COL_ODOMETER)}{sheet_row_num-1})/{chr(65+COL_GALLONS)}{sheet_row_num}"
@@ -184,6 +206,9 @@ def update_mpg_calculations(worksheet):
                     # Update the MPG cell
                     worksheet.update_cell(sheet_row_num, COL_MPG + 1, mpg_formula)
                     updated_count += 1
+
+        if suspicious_count > 0:
+            print(f"⚠️  Found {suspicious_count} suspicious MPG value(s) > 35 (highlighted yellow)")
 
         return updated_count
     except Exception as e:
