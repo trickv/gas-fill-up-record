@@ -28,6 +28,11 @@ COL_CAR = 6
 COL_MPG = 7
 COL_NOTES = 8
 
+# ==== CAR NAMES ====
+CAR_PRIMARY = "samantha"
+CAR_SECONDARY = "mkz"
+CAR_SKIP = "skip"
+
 # Validate required environment variables
 if not YNAB_API_KEY:
     raise EnvironmentError("YNAB_API_KEY environment variable not set")
@@ -145,8 +150,8 @@ def update_mpg_calculations(worksheet):
             previous_row = all_rows[i - 1]
 
             # Check if current row is for Samantha (primary car)
-            current_car = current_row[COL_CAR].strip() if len(current_row) > COL_CAR else ""
-            if current_car.lower() != "samantha":
+            current_car = current_row[COL_CAR].strip().lower() if len(current_row) > COL_CAR else ""
+            if current_car != CAR_PRIMARY:
                 continue
 
             # Check if both rows have gallons and odometer
@@ -162,8 +167,8 @@ def update_mpg_calculations(worksheet):
             )
 
             # Check if previous row is also Samantha
-            previous_car = previous_row[COL_CAR].strip() if len(previous_row) > COL_CAR else ""
-            previous_is_samantha = previous_car.lower() == "samantha"
+            previous_car = previous_row[COL_CAR].strip().lower() if len(previous_row) > COL_CAR else ""
+            previous_is_samantha = previous_car == CAR_PRIMARY
 
             if current_has_data and previous_has_data and previous_is_samantha:
                 # Row numbers are 1-indexed in Google Sheets
