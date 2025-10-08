@@ -17,6 +17,17 @@ HA_TOKEN = os.getenv("HA_TOKEN")
 HA_NOTIFY_SERVICE = os.getenv("HA_NOTIFY_SERVICE", "notify.mobile_app_trickyiphone16v2")
 DAYS_BACK = 90
 
+# ==== SHEET COLUMN INDICES (0-based) ====
+COL_YNAB_ID = 0
+COL_DATE = 1
+COL_PROVIDER = 2
+COL_AMOUNT = 3
+COL_GALLONS = 4
+COL_ODOMETER = 5
+COL_CAR = 6
+COL_MPG = 7
+COL_NOTES = 8
+
 # Validate required environment variables
 if not YNAB_API_KEY:
     raise EnvironmentError("YNAB_API_KEY environment variable not set")
@@ -105,13 +116,10 @@ def count_missing_data(worksheet):
         # Skip header row
         data_rows = all_rows[1:] if len(all_rows) > 1 else []
 
-        # Column index: car=6
-        CAR_COL = 6
-
         missing_count = 0
         for row in data_rows:
             # Count if car column is empty (user hasn't filled in data yet)
-            car_value = row[CAR_COL].strip() if len(row) > CAR_COL else ""
+            car_value = row[COL_CAR].strip() if len(row) > COL_CAR else ""
             if not car_value:
                 missing_count += 1
 
@@ -130,11 +138,6 @@ def update_mpg_calculations(worksheet):
             return 0
 
         updated_count = 0
-        # Column indices (0-based): gallons=4, odometer=5, car=6, mpg=7, notes=8
-        GALLONS_COL = 4
-        ODOMETER_COL = 5
-        CAR_COL = 6
-        MPG_COL = 7
 
         # Start from row 3 (index 2, since we need a previous row)
         for i in range(2, len(all_rows)):
@@ -142,24 +145,24 @@ def update_mpg_calculations(worksheet):
             previous_row = all_rows[i - 1]
 
             # Check if current row is for Samantha (primary car)
-            current_car = current_row[CAR_COL].strip() if len(current_row) > CAR_COL else ""
+            current_car = current_row[COL_CAR].strip() if len(current_row) > COL_CAR else ""
             if current_car.lower() != "samantha":
                 continue
 
             # Check if both rows have gallons and odometer
             current_has_data = (
-                len(current_row) > ODOMETER_COL and
-                current_row[GALLONS_COL].strip() and
-                current_row[ODOMETER_COL].strip()
+                len(current_row) > COL_ODOMETER and
+                current_row[COL_GALLONS].strip() and
+                current_row[COL_ODOMETER].strip()
             )
             previous_has_data = (
-                len(previous_row) > ODOMETER_COL and
-                previous_row[GALLONS_COL].strip() and
-                previous_row[ODOMETER_COL].strip()
+                len(previous_row) > COL_ODOMETER and
+                previous_row[COL_GALLONS].strip() and
+                previous_row[COL_ODOMETER].strip()
             )
 
             # Check if previous row is also Samantha
-            previous_car = previous_row[CAR_COL].strip() if len(previous_row) > CAR_COL else ""
+            previous_car = previous_row[COL_CAR].strip() if len(previous_row) > COL_CAR else ""
             previous_is_samantha = previous_car.lower() == "samantha"
 
             if current_has_data and previous_has_data and previous_is_samantha:
@@ -168,13 +171,13 @@ def update_mpg_calculations(worksheet):
 
                 # Create formula: =(odometer_current - odometer_previous) / gallons_current
                 # Using A1 notation for the formula
-                mpg_formula = f"=({chr(65+ODOMETER_COL)}{sheet_row_num}-{chr(65+ODOMETER_COL)}{sheet_row_num-1})/{chr(65+GALLONS_COL)}{sheet_row_num}"
+                mpg_formula = f"=({chr(65+COL_ODOMETER)}{sheet_row_num}-{chr(65+COL_ODOMETER)}{sheet_row_num-1})/{chr(65+COL_GALLONS)}{sheet_row_num}"
 
                 # Check if MPG cell needs updating (is empty or not a formula)
-                current_mpg = current_row[MPG_COL] if len(current_row) > MPG_COL else ""
+                current_mpg = current_row[COL_MPG] if len(current_row) > COL_MPG else ""
                 if not current_mpg.startswith("="):
                     # Update the MPG cell
-                    worksheet.update_cell(sheet_row_num, MPG_COL + 1, mpg_formula)
+                    worksheet.update_cell(sheet_row_num, COL_MPG + 1, mpg_formula)
                     updated_count += 1
 
         return updated_count
