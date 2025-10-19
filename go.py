@@ -105,7 +105,7 @@ def append_transactions_to_sheet(worksheet, transactions):
 
         rows.append([
             transaction.id,
-            date_obj,  # Use datetime object, not string
+            date_obj.strftime('%Y-%m-%d'),  # Convert datetime to string for JSON serialization
             provider,
             amount,  # Plain float, no dollar sign
             "",  # Empty gallons column
@@ -323,8 +323,11 @@ def send_ha_notification(missing_count, sheet_url):
         response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status()
         print(f"📱 Sent Home Assistant notification: {missing_count} transaction(s) need gallon data")
+        print(f"   Response: {response.status_code} - {response.text}")
     except Exception as e:
         print(f"⚠️  Failed to send Home Assistant notification: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            print(f"   Response: {e.response.status_code} - {e.response.text}")
 
 
 # ==== MAIN ====
